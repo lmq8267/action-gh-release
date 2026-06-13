@@ -43,7 +43,7 @@ export const releaseBody = (config: Config): string | undefined => {
       return contents;
     } catch (err: any) {
       console.warn(
-        `⚠️ Failed to read body_path "${config.input_body_path}" (${err?.code ?? 'ERR'}). Falling back to 'body' input.`,
+        `⚠️ 无法读取 body_path "${config.input_body_path}" (${err?.code ?? 'ERR'})，将回退到 'body' 输入。`,
       );
     }
   }

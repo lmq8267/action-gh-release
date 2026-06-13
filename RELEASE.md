@@ -1,43 +1,43 @@
-# Release Workflow
+# Release 工作流程
 
-Use this checklist when cutting a new `action-gh-release` release.
+在发布新版本的 `action-gh-release` 时，请使用此清单。
 
-## Inputs
+## 前置准备
 
-- Decide the semantic version bump first: `major`, `minor`, or `patch`.
-- Review recent merged PRs and labels before drafting the changelog entry.
-- Make sure `master` is current and the worktree is clean before starting.
+- 首先确定语义化版本号：`major`（主版本）、`minor`（次版本）或 `patch`（补丁）。
+- 在编写变更日志条目之前，审查最近合并的 PR 及其标签。
+- 确保 `master` 分支是最新的，工作区是干净的。
 
-## Checklist
+## 清单
 
-1. Update [package.json](package.json) to the new version.
-2. Add the new entry at the top of [CHANGELOG.md](CHANGELOG.md).
-   - Summarize the release in 1 short paragraph.
-   - If the summary mentions issues, use plain `#123` references or full issue links; do not wrap issue numbers like `#123` in backticks.
-   - Prefer user-facing fixes and features over internal churn.
-   - Keep the merged PR list aligned with `.github/release.yml` categories.
-3. Run `npm i` to refresh [package-lock.json](package-lock.json).
-4. Run the full local verification set:
+1. 将 [package.json](package.json) 更新为新版本号。
+2. 在 [CHANGELOG.md](CHANGELOG.md) 顶部添加新条目。
+   - 用 1 个简短的段落总结本次发布。
+   - 如果摘要中提到 issue，请使用 `#123` 引用或完整的 issue 链接；不要将 `#123` 这样的编号包含在反引号中。
+   - 优先编写用户可见的修复和功能，而非内部维护变更。
+   - 确保合并的 PR 列表与 `.github/release.yml` 中的分类保持一致。
+3. 运行 `npm i` 以刷新 [package-lock.json](package-lock.json)。
+4. 运行完整的本地验证集：
    - `npm run fmtcheck`
    - `npm run typecheck`
    - `npm run build`
    - `npm test`
-5. Commit the release prep.
-   - Use a plain release commit message like `release 3.0.0`.
-6. Create the annotated tag for the release commit.
-   - Example: `git tag -a v3.0.0 -m "v3.0.0"`
-7. Push the commit and tag.
-   - Example: `git push origin master && git push origin v3.0.0`
-8. Move the floating major tag to the new release tag.
-   - For the current major line, run `npm run updatetag` to move `v3`.
-   - Keep `v2` pinned to the latest `2.x` release for consumers that still need the Node 20 runtime.
-   - Verify the floating tag points at the same commit as the new full tag.
-9. Create the GitHub release from the new tag.
-   - Prefer the release body from [CHANGELOG.md](CHANGELOG.md), then let GitHub append generated notes only if they add value.
-   - Verify the release shows the expected tag, title, notes, and attached artifacts.
+5. 提交发布准备。
+   - 使用简洁的发布提交信息，例如 `release 3.0.0`。
+6. 为发布提交创建附注标签。
+   - 示例：`git tag -a v3.0.0 -m "v3.0.0"`
+7. 推送提交和标签。
+   - 示例：`git push origin master && git push origin v3.0.0`
+8. 将浮动主版本标签移动到新的发布标签。
+   - 对于当前主版本线，运行 `npm run updatetag` 来移动 `v3`。
+   - 将 `v2` 固定在最新的 `2.x` 版本，供仍需要 Node 20 运行时的使用者使用。
+   - 验证浮动标签指向与新的完整标签相同的提交。
+9. 从新标签创建 GitHub Release。
+   - 优先使用 [CHANGELOG.md](CHANGELOG.md) 中的发布正文，然后仅在自动生成的说明有价值时才让 GitHub 附加它们。
+   - 验证 Release 显示了正确的标签、标题、说明和附件。
 
-## Notes
+## 注意事项
 
-- Behavior changes should already have matching updates in [README.md](README.md), [action.yml](action.yml), tests, and `dist/index.js` before release prep begins.
-- Docs-only releases still need an intentional changelog entry and version bump decision.
-- If a release is mainly bug fixes, keep the title and summary patch-oriented; do not bury the actual fixes under dependency noise.
+- 行为变更应在发布准备开始之前，已在 [README.md](README.md)、[action.yml](action.yml)、测试和 `dist/index.js` 中包含相应的更新。
+- 仅文档变更也需要有明确的变更日志条目和版本号更新决定。
+- 如果发布内容主要是错误修复，请保持标题和摘要面向补丁版本；不要将实际的修复内容埋没在依赖更新的噪声中。

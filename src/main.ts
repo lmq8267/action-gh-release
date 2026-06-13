@@ -9,19 +9,19 @@ async function run() {
   try {
     const config = parseConfig(env);
     if (!config.input_tag_name && !isTag(config.github_ref) && !config.input_draft) {
-      throw new Error(`⚠️ GitHub Releases requires a tag`);
+      throw new Error(`⚠️ GitHub Releases 需要一个标签（tag）`);
     }
     if (config.input_files) {
       const patterns = unmatchedPatterns(config.input_files, config.input_working_directory);
       patterns.forEach((pattern) => {
         if (config.input_fail_on_unmatched_files) {
-          throw new Error(`⚠️  Pattern '${pattern}' does not match any files.`);
+          throw new Error(`⚠️ 模式 '${pattern}' 没有匹配到任何文件。`);
         } else {
-          console.warn(`🤔 Pattern '${pattern}' does not match any files.`);
+          console.warn(`🤔 模式 '${pattern}' 没有匹配到任何文件。`);
         }
       });
       if (patterns.length > 0 && config.input_fail_on_unmatched_files) {
-        throw new Error(`⚠️ There were unmatched files`);
+        throw new Error(`⚠️ 存在未匹配的文件`);
       }
     }
 
@@ -34,16 +34,16 @@ async function run() {
       //new oktokit(
       throttle: {
         onRateLimit: (retryAfter, options) => {
-          console.warn(`Request quota exhausted for request ${options.method} ${options.url}`);
+          console.warn(`请求配额已耗尽，来自请求 ${options.method} ${options.url}`);
           if (options.request.retryCount === 0) {
-            // only retries once
-            console.log(`Retrying after ${retryAfter} seconds!`);
+            // 仅重试一次
+            console.log(`将在 ${retryAfter} 秒后重试！`);
             return true;
           }
         },
         onAbuseLimit: (retryAfter, options) => {
-          // does not retry, only logs a warning
-          console.warn(`Abuse detected for request ${options.method} ${options.url}`);
+          // 不重试，仅记录警告
+          console.warn(`检测到滥用行为，来自请求 ${options.method} ${options.url}`);
         },
       },
     });
@@ -57,9 +57,9 @@ async function run() {
       const files = paths(config.input_files, config.input_working_directory);
       if (files.length == 0) {
         if (config.input_fail_on_unmatched_files) {
-          throw new Error(`⚠️ ${config.input_files} does not include a valid file.`);
+          throw new Error(`⚠️ ${config.input_files} 不包含有效文件。`);
         } else {
-          console.warn(`🤔 ${config.input_files} does not include a valid file.`);
+          console.warn(`🤔 ${config.input_files} 不包含有效文件。`);
         }
       }
       const currentAssets = rel.assets;
@@ -82,12 +82,12 @@ async function run() {
       uploadedAssetIds = new Set(results.filter((id): id is number => id !== undefined));
     }
 
-    console.log('Finalizing release...');
+    console.log('正在完成发布...');
     rel = await finalizeRelease(config, releaser, rel, releaseWasCreated);
 
-    // Draft releases use temporary "untagged-..." URLs for assets.
-    // URLs will be changed to correct ones once the release is published.
-    console.log('Getting assets list...');
+    // 草稿发布使用临时的 "untagged-..." URL 来引用资产。
+    // 发布上线后，这些 URL 会被替换为正确的地址。
+    console.log('正在获取资产列表...');
     {
       let assets: any[] = [];
       if (uploadedAssetIds.size > 0) {
@@ -102,7 +102,7 @@ async function run() {
       setOutput('assets', assets);
     }
 
-    console.log(`🎉 Release ready at ${rel.html_url}`);
+    console.log(`🎉 Release 已就绪，访问地址 ${rel.html_url}`);
     setOutput('url', rel.html_url);
     setOutput('id', rel.id.toString());
     setOutput('upload_url', rel.upload_url);

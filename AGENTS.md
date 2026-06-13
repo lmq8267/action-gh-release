@@ -1,80 +1,80 @@
 # action-gh-release
 
-This repository is maintained as a small, user-facing GitHub Action with a relatively wide compatibility surface.
-Optimize for stability, reproducibility, and clear user value over broad rewrites.
+此仓库作为一个小型的、面向用户的 GitHub Action 进行维护，具有相对广泛的兼容性。
+优先考虑稳定性、可重复性和清晰的用户价值，而非大规模重写。
 
-## Core Rules
+## 核心原则
 
-- Prefer narrow behavior fixes over structural churn.
-- Reproduce current behavior on `master` before changing code.
-- Treat GitHub platform behavior as distinct from action behavior.
-  If GitHub controls the outcome, prefer docs or clearer errors over brittle workarounds.
-- Do not revive stale PRs mechanically.
-  Reuse the idea if it still has value, but reimplement on top of current `master`.
-- Avoid standalone refactors with no clear user-facing benefit.
+- 倾向于窄范围的行为修复，而非结构性变动。
+- 在修改代码之前，先在 `master` 分支上复现当前行为。
+- 将 GitHub 平台行为与 Action 行为区分对待。
+  如果结果由 GitHub 控制，优先完善文档或提供更清晰的错误信息，而非编写脆弱的变通方案。
+- 不要机械地复活陈旧的 PR。
+  如果某个想法仍然有价值，可以复用其思路，但要在当前的 `master` 基础上重新实现。
+- 避免没有明确用户收益的独立重构。
 
-## Current Architecture
+## 当前架构
 
-- `src/main.ts` is the orchestration layer: parse config, validate inputs, create/update release, upload assets, finalize, set outputs.
-- `src/github.ts` owns release semantics: lookup, create/update/finalize, asset upload, race handling, and GitHub API interaction.
-- `src/util.ts` owns parsing and path normalization.
-- Keep behavior-specific logic in `src/github.ts` or `src/util.ts`; avoid growing `src/main.ts` with ad-hoc feature branches.
+- `src/main.ts` 是编排层：解析配置、验证输入、创建/更新 Release、上传资产、完成发布、设置输出。
+- `src/github.ts` 负责 Release 语义：查找、创建/更新/完成、资产上传、竞态处理和 GitHub API 交互。
+- `src/util.ts` 负责解析和路径规范化。
+- 将行为相关的逻辑保留在 `src/github.ts` 或 `src/util.ts` 中；避免在 `src/main.ts` 中增加临时性的功能分支。
 
-## Bug-Fix Workflow
+## 错误修复工作流程
 
-- Reproduce the issue against current `master` first.
-- When available, use the companion consumer harness repo `action-gh-release-test`.
-- Capture exact workflow run URLs and release URLs before claiming a fix.
-- If the issue is really a docs/usage or platform-limit case, document it and close it as such instead of forcing a code change.
-- If a historical issue no longer reproduces on current `master`, prefer a short closeout note that asks the reporter to open a fresh issue if they still see it.
+- 首先针对当前的 `master` 复现问题。
+- 如果可以，使用配套的消费者测试仓库 `action-gh-release-test`。
+- 在确认修复之前，捕获准确的工作流运行 URL 和 Release URL。
+- 如果问题实际上是文档/用法或平台限制的情况，应记录为文档说明并关闭，而不是强行修改代码。
+- 如果历史问题在当前的 `master` 上不再复现，应简要关闭并请报告者在仍能看到问题时重新开启新的 issue。
 
-## Feature Triage
+## 功能筛选
 
-- Ship features only when there is clear user value or repeated demand.
-- Small convenience features are fine, but they should stay small.
-- Weak-demand features should not expand parsing complexity, cross-platform ambiguity, or maintenance surface.
-- For old feature PRs:
-  - check whether current `master` already covers the behavior
-  - prefer a tiny docs clarification if the behavior exists but is poorly explained
-  - close stale feature PRs when the idea is obsolete, low-value, or badly shaped for the current codebase
+- 只有在有明确的用户价值或反复需求时才发布功能。
+- 小的便利功能是可以的，但应该保持小规模。
+- 需求较弱的功能不应增加解析复杂性、跨平台歧义或维护负担。
+- 对于旧的功能 PR：
+  - 检查当前的 `master` 是否已经覆盖了该行为
+  - 如果行为已存在但文档不清晰，优先提供简短的文档说明
+  - 当想法已过时、价值不高或与当前代码库不匹配时，关闭陈旧的功能 PR
 
-## Contract Sync
+## 契约同步
 
-When behavior changes, keep the external contract in sync:
+当行为发生变更时，保持外部契约同步更新：
 
-- update `README.md`
-- update `action.yml`
-- update tests under `__tests__/`
-- regenerate `dist/index.js` with `npm run build`
+- 更新 `README.md`
+- 更新 `action.yml`
+- 更新 `__tests__/` 下的测试
+- 使用 `npm run build` 重新生成 `dist/index.js`
 
-Docs-only changes do not need `dist/index.js` regeneration.
+仅文档变更不需要重新生成 `dist/index.js`。
 
-## Verification
+## 验证
 
-For code changes, run:
+对于代码变更，请运行：
 
 - `npm run fmtcheck`
 - `npm run typecheck`
 - `npm run build`
 - `npm test`
 
-For behavior changes, also run the relevant external regression workflow(s) in `action-gh-release-test` against the exact ref under test.
+对于行为变更，还需要在 `action-gh-release-test` 中针对正在测试的确切引用运行相关的外部回归工作流。
 
-## Release and Triage Conventions
+## 发布和分类约定
 
-- Keep PR labels accurate. Release notes depend on them.
-  - bug fixes: `bug`
-  - docs-only changes: `documentation`
-  - additive features: `feature` or `enhancement`
-  - dependency updates: `dependencies`
-- Follow [RELEASE.md](RELEASE.md) for version bumps, changelog updates, tagging, and release publication.
-- Prefer manual issue/PR closeouts with a short rationale over implicit assumptions.
-- Do not auto-close old PRs or issues through unrelated docs PRs.
+- 保持 PR 标签的准确性。Release 说明依赖于它们。
+  - 错误修复：`bug`
+  - 仅文档变更：`documentation`
+  - 新增功能：`feature` 或 `enhancement`
+  - 依赖更新：`dependencies`
+- 有关版本号更新、变更日志更新、标签创建和发布发布的说明，请遵循 [RELEASE.md](RELEASE.md)。
+- 优先手动关闭 issue/PR 并附上简短的理由说明，而不是做出隐晦的假设。
+- 不要通过不相关的文档 PR 自动关闭旧的 PR 或 issue。
 
-## Implementation Preferences
+## 实现偏好
 
-- Preserve the current upload/finalize flow unless there is strong evidence it needs to change.
-- Prefer upload-time semantics over filesystem mutation.
-- Be careful with parsing changes around `files`, path handling, and Windows compatibility.
-- Be careful with race-condition fixes; verify both local tests and consumer-repo concurrency harnesses.
-- Do not assume a refactor is safe just because tests are green. This action’s behavior is heavily shaped by GitHub API edge cases.
+- 除非有充分证据表明需要更改，否则保留当前的上传/完成流程。
+- 优先考虑上传时的语义而非文件系统操作。
+- 对 `files`、路径处理和 Windows 兼容性相关的解析更改要谨慎。
+- 对竞态条件修复要谨慎；同时验证本地测试和消费者仓库的并发测试。
+- 不要仅仅因为测试通过就认为重构是安全的。此 Action 的行为很大程度上受 GitHub API 边缘情况的影响。

@@ -3,6 +3,7 @@ import { statSync } from 'fs';
 import { open } from 'fs/promises';
 import { lookup } from 'mime-types';
 import { basename } from 'path';
+import { randomInt } from 'crypto';
 import { alignAssetName, Config, isTag, normalizeTagName, releaseBody } from './util';
 
 type GitHub = InstanceType<typeof GitHub>;
@@ -298,8 +299,8 @@ const immutableReleaseAssetUploadMessage = (
   prerelease: boolean | undefined,
 ): string =>
   prerelease
-    ? `Cannot upload asset ${name} to an immutable release. GitHub only allows asset uploads before a release is published, but draft prereleases publish with the release.published event instead of release.prereleased. If you need prereleases with assets on an immutable-release repository, keep the release as a draft with draft: true, then publish it later from that draft and subscribe downstream workflows to release.published.`
-    : `Cannot upload asset ${name} to an immutable release. GitHub only allows asset uploads before a release is published, so upload assets to a draft release before you publish it.`;
+    ? `无法将资产 ${name} 上传到不可变的 Release。GitHub 只允许在 Release 发布之前上传资产，但草稿预发布使用 release.published 事件而非 release.prereleased 事件触发。如果需要在不可变 Release 仓库中为预发布上传资产，请使用 draft: true 保持草稿状态，然后稍后从该草稿发布并让下游工作流订阅 release.published。`
+    : `无法将资产 ${name} 上传到不可变的 Release。GitHub 只允许在 Release 发布之前上传资产，因此请先将资产上传到草稿 Release，然后再发布它。`;
 
 export const upload = async (
   config: Config,
@@ -319,10 +320,10 @@ export const upload = async (
   );
   if (currentAsset) {
     if (config.input_overwrite_files === false) {
-      console.log(`Asset ${name} already exists and overwrite_files is false...`);
+      console.log(`资产 ${name} 已存在且 overwrite_files 为 false，跳过...`);
       return null;
     } else {
-      console.log(`♻️ Deleting previously uploaded asset ${name}...`);
+      console.log(`♻️ 正在删除之前上传的资产 ${name}...`);
       await releaser.deleteReleaseAsset({
         asset_id: currentAsset.id || 1,
         owner,
@@ -330,7 +331,7 @@ export const upload = async (
       });
     }
   }
-  console.log(`⬆️ Uploading ${name}...`);
+  console.log(`⬆️ 正在上传 ${name}...`);
   const endpoint = new URL(url);
   endpoint.searchParams.append('name', name);
   const findReleaseAsset = async (
@@ -384,7 +385,7 @@ export const upload = async (
       return uploadedAsset;
     }
 
-    console.log(`✏️ Restoring asset label to ${name}...`);
+    console.log(`✏️ 正在将资产标签恢复为 ${name}...`);
 
     const updateAssetLabel = async (assetId: number) => {
       const { data } = await releaser.updateReleaseAsset({
@@ -412,11 +413,11 @@ export const upload = async (
             return await updateAssetLabel(latestAsset.id);
           }
         } catch (refreshError) {
-          console.warn(`error refreshing release assets for ${name}: ${refreshError}`);
+          console.warn(`刷新资产 ${name} 的 Release 资产时出错：${refreshError}`);
         }
       }
 
-      console.warn(`error updating release asset label for ${name}: ${error}`);
+      console.warn(`更新资产 ${name} 的标签时出错：${error}`);
       return uploadedAsset;
     }
   };
@@ -425,13 +426,13 @@ export const upload = async (
     const json = resp.data;
     if (resp.status !== 201) {
       throw new Error(
-        `Failed to upload release asset ${name}. received status code ${
+        `上传 Release 资产 ${name} 失败。收到状态码 ${
           resp.status
         }\n${json.message}\n${JSON.stringify(json.errors)}`,
       );
     }
     const assetWithLabel = await maybeRestoreAssetLabel(json);
-    console.log(`✅ Uploaded ${name}`);
+    console.log(`✅ ${name} 上传成功`);
     return assetWithLabel;
   };
 
@@ -452,13 +453,13 @@ export const upload = async (
         );
         if (latestAsset) {
           console.warn(
-            `error updating release asset metadata for ${name}: ${error}. Matching asset is present after refresh; continuing...`,
+            `更新资产 ${name} 的 Release 资产元数据时出错：${error}。刷新后找到匹配的资产，继续执行...`,
           );
           return latestAsset;
         }
       } catch (refreshError) {
         console.warn(
-          `error refreshing release assets after metadata update failure: ${refreshError}`,
+          `元数据更新失败后刷新 Release 资产时出错：${refreshError}`,
         );
       }
     }
@@ -471,7 +472,7 @@ export const upload = async (
       releaseId !== undefined
     ) {
       console.log(
-        `⚠️ Asset ${name} already exists (race condition), refreshing assets and retrying once...`,
+        `⚠️ 资产 ${name} 已存在（竞态条件），正在刷新资产列表并重试一次...`,
       );
       const latestAssets = await releaser.listReleaseAssets({
         owner,
@@ -501,8 +502,8 @@ export const release = async (
   maxRetries: number = 3,
 ): Promise<ReleaseResult> => {
   if (maxRetries <= 0) {
-    console.log(`❌ Too many retries. Aborting...`);
-    throw new Error('Too many retries.');
+    console.log(`❌ 重试次数过多，正在中止...`);
+    throw new Error('重试次数过多。');
   }
 
   const [owner, repo] = config.github_repository.split('/');
@@ -515,7 +516,7 @@ export const release = async (
   const previous_tag_name = config.input_previous_tag;
 
   if (generate_release_notes && previous_tag_name) {
-    console.log(`📝 Generating release notes using previous tag ${previous_tag_name}`);
+    console.log(`📝 使用上一个标签 ${previous_tag_name} 生成 Release 说明`);
   }
   try {
     const _release: Release | undefined = await findTagFromReleases(releaser, owner, repo, tag);
@@ -535,7 +536,7 @@ export const release = async (
     }
 
     let existingRelease: Release = _release!;
-    console.log(`Found release ${existingRelease.name} (with id=${existingRelease.id})`);
+    console.log(`找到 Release ${existingRelease.name}（ID=${existingRelease.id}）`);
 
     const release_id = existingRelease.id;
     let target_commitish: string;
@@ -544,7 +545,7 @@ export const release = async (
       config.input_target_commitish !== existingRelease.target_commitish
     ) {
       console.log(
-        `Updating commit from "${existingRelease.target_commitish}" to "${config.input_target_commitish}"`,
+        `正在将 commit 从 "${existingRelease.target_commitish}" 更新为 "${config.input_target_commitish}"`,
       );
       target_commitish = config.input_target_commitish;
     } else {
@@ -571,11 +572,13 @@ export const release = async (
 
     const make_latest = config.input_make_latest;
 
+    // 更新 Release 时，如果标签没变就不传 tag_name，避免触发 GitHub API
+    // 的唯一性校验（422 already_exists），详见 https://docs.github.com/rest/releases/releases#update-a-release
     const release = await releaser.updateRelease({
       owner,
       repo,
       release_id,
-      tag_name,
+      ...(tag_name !== existingRelease.tag_name ? { tag_name } : {}),
       target_commitish,
       name,
       body,
@@ -584,7 +587,9 @@ export const release = async (
       discussion_category_name,
       generate_release_notes,
       make_latest,
-      previous_tag_name,
+    } as ReleaseMutationParams & {
+      release_id: number;
+      target_commitish: string;
     });
     return {
       release: release.data,
@@ -592,8 +597,18 @@ export const release = async (
     };
   } catch (error) {
     if (error.status !== 404) {
+      // 处理矩阵构建中的竞态条件：两个 Job 同时更新同一个 Release
+      if (error.status === 422 && error.response?.data?.errors?.[0]?.code === 'already_exists') {
+        console.log(
+          `⚠️ Release 更新时检测到竞态条件（already_exists），正在重试...（剩余 ${maxRetries - 1} 次重试机会）`,
+        );
+        // 随机延迟 1~3 秒，错开多个矩阵 Job 的重试时间，避免持续冲突
+        await sleep(UPDATE_RACE_RETRY_DELAY_MS + randomInt(1000));
+        return release(config, releaser, maxRetries - 1);
+      }
+
       console.log(
-        `⚠️ Unexpected error fetching GitHub release for tag ${config.github_ref}: ${error}`,
+        `⚠️ 获取标签 ${config.github_ref} 的 GitHub Release 时出现意外错误：${error}`,
       );
       throw error;
     }
@@ -633,8 +648,8 @@ export const finalizeRelease = async (
   }
 
   if (maxRetries <= 0) {
-    console.log(`❌ Too many retries. Aborting...`);
-    throw new Error('Too many retries.');
+    console.log(`❌ 重试次数过多，正在中止...`);
+    throw new Error('重试次数过多。');
   }
 
   const [owner, repo] = config.github_repository.split('/');
@@ -649,14 +664,14 @@ export const finalizeRelease = async (
 
     return data;
   } catch (error) {
-    console.warn(`error finalizing release: ${error}`);
+    console.warn(`完成 Release 时出错：${error}`);
 
     if (releaseWasCreated && release.draft && isTagCreationBlockedError(error)) {
       let deleted = false;
 
       try {
         console.log(
-          `🧹 Deleting draft release ${release.id} for tag ${release.tag_name} because tag creation is blocked by repository rules...`,
+          `🧹 正在删除标签 ${release.tag_name} 的草稿 Release ${release.id}，因为标签创建被仓库规则阻止...`,
         );
         await releaser.deleteRelease({
           owner,
@@ -665,18 +680,18 @@ export const finalizeRelease = async (
         });
         deleted = true;
       } catch (cleanupError) {
-        console.warn(`error deleting orphan draft release ${release.id}: ${cleanupError}`);
+        console.warn(`删除孤立草稿 Release ${release.id} 时出错：${cleanupError}`);
       }
 
       const cleanupResult = deleted
-        ? `Deleted draft release ${release.id} to avoid leaving an orphaned draft release.`
-        : `Failed to delete draft release ${release.id}; manual cleanup may still be required.`;
+        ? `已删除草稿 Release ${release.id} 以避免留下孤立的草稿 Release。`
+        : `无法删除草稿 Release ${release.id}；可能需要手动清理。`;
       throw new Error(
-        `Tag creation for ${release.tag_name} is blocked by repository rules. ${cleanupResult}`,
+        `标签 ${release.tag_name} 的创建被仓库规则阻止。${cleanupResult}`,
       );
     }
 
-    console.log(`retrying... (${maxRetries - 1} retries remaining)`);
+    console.log(`正在重试...（剩余 ${maxRetries - 1} 次重试机会）`);
     return finalizeRelease(config, releaser, release, releaseWasCreated, maxRetries - 1);
   }
 };
@@ -696,8 +711,8 @@ export const listReleaseAssets = async (
   maxRetries: number = 3,
 ): Promise<Array<{ id: number; name: string; [key: string]: any }>> => {
   if (maxRetries <= 0) {
-    console.log(`❌ Too many retries. Aborting...`);
-    throw new Error('Too many retries.');
+    console.log(`❌ 重试次数过多，正在中止...`);
+    throw new Error('重试次数过多。');
   }
 
   const [owner, repo] = config.github_repository.split('/');
@@ -710,8 +725,8 @@ export const listReleaseAssets = async (
 
     return assets;
   } catch (error) {
-    console.warn(`error listing assets of release: ${error}`);
-    console.log(`retrying... (${maxRetries - 1} retries remaining)`);
+    console.warn(`列出 Release 资产时出错：${error}`);
+    console.log(`正在重试...（剩余 ${maxRetries - 1} 次重试机会）`);
     return listReleaseAssets(config, releaser, release, maxRetries - 1);
   }
 };
@@ -749,6 +764,7 @@ export async function findTagFromReleases(
 }
 
 const CREATED_RELEASE_DISCOVERY_RETRY_DELAY_MS = 1000;
+const UPDATE_RACE_RETRY_DELAY_MS = 2000;
 const RECENT_RELEASE_SCAN_PAGES = 2;
 
 async function sleep(ms: number): Promise<void> {
@@ -815,14 +831,14 @@ async function cleanupDuplicateDraftReleases(
     }
 
     try {
-      console.log(`🧹 Removing duplicate draft release ${duplicate.id} for tag ${tag}...`);
+      console.log(`🧹 正在删除标签 ${tag} 的重复草稿 Release ${duplicate.id}...`);
       await releaser.deleteRelease({
         owner,
         repo,
         release_id: duplicate.id,
       });
     } catch (error) {
-      console.warn(`error deleting duplicate release ${duplicate.id}: ${error}`);
+      console.warn(`删除重复 Release ${duplicate.id} 时出错：${error}`);
     }
   }
 }
@@ -842,21 +858,21 @@ async function canonicalizeCreatedRelease(
     try {
       releaseByTag = await findTagFromReleases(releaser, owner, repo, tag);
     } catch (error) {
-      console.warn(`error reloading release for tag ${tag}: ${error}`);
+      console.warn(`重新加载标签 ${tag} 的 Release 时出错：${error}`);
     }
 
     let recentReleases: Release[] = [];
     try {
       recentReleases = await recentReleasesByTag(releaser, owner, repo, tag);
     } catch (error) {
-      console.warn(`error listing recent releases for tag ${tag}: ${error}`);
+      console.warn(`列出标签 ${tag} 的最近 Release 时出错：${error}`);
     }
 
     const canonicalRelease = pickCanonicalRelease(recentReleases, releaseByTag);
     if (canonicalRelease) {
       if (canonicalRelease.id !== createdRelease.id) {
         console.log(
-          `↪️ Using release ${canonicalRelease.id} for tag ${tag} instead of duplicate draft ${createdRelease.id}`,
+          `↪️ 标签 ${tag} 使用 Release ${canonicalRelease.id} 而非重复的草稿 ${createdRelease.id}`,
         );
       }
 
@@ -869,16 +885,16 @@ async function canonicalizeCreatedRelease(
 
     if (attempt < attempts) {
       console.log(
-        `Release ${createdRelease.id} is not yet discoverable by tag ${tag}, retrying... (${
+        `Release ${createdRelease.id} 尚无法通过标签 ${tag} 查找到，正在重试...（剩余 ${
           attempts - attempt
-        } retries remaining)`,
+        } 次重试机会）`,
       );
       await sleep(CREATED_RELEASE_DISCOVERY_RETRY_DELAY_MS);
     }
   }
 
   console.log(
-    `⚠️ Continuing with newly created release ${createdRelease.id} because tag ${tag} is still not discoverable`,
+    `⚠️ 继续使用新创建的 Release ${createdRelease.id}，因为标签 ${tag} 仍然无法查找到`,
   );
   return createdRelease;
 }
@@ -903,9 +919,9 @@ async function createRelease(
   const make_latest = config.input_make_latest;
   let commitMessage: string = '';
   if (target_commitish) {
-    commitMessage = ` using commit "${target_commitish}"`;
+    commitMessage = `，使用 commit "${target_commitish}"`;
   }
-  console.log(`👩‍🏭 Creating new GitHub release for tag ${tag_name}${commitMessage}...`);
+  console.log(`👩‍🏭 正在为标签 ${tag_name} 创建新的 GitHub Release${commitMessage}...`);
   try {
     const createdRelease = await releaser.createRelease({
       owner,
@@ -934,37 +950,39 @@ async function createRelease(
       created: canonicalRelease.id === createdRelease.data.id,
     };
   } catch (error) {
-    // presume a race with competing matrix runs
-    console.log(`⚠️ GitHub release failed with status: ${error.status}`);
+    // 推测是与并行运行的竞争条件
+    console.log(`⚠️ GitHub Release 创建失败，状态码：${error.status}`);
     console.log(`${JSON.stringify(error.response.data)}`);
 
     switch (error.status) {
       case 403:
         console.log(
-          'Skip retry — your GitHub token/PAT does not have the required permission to create a release',
+          '跳过重试 — 您的 GitHub Token/PAT 没有创建 Release 所需的权限',
         );
         throw error;
 
       case 404:
-        console.log('Skip retry - discussion category mismatch');
+        console.log('跳过重试 — 讨论分类不匹配');
         throw error;
 
       case 422:
-        // Check if this is a race condition with "already_exists" error
+        // 检查是否为 "already_exists" 错误（竞争条件）
         const errorData = error.response?.data;
         if (errorData?.errors?.[0]?.code === 'already_exists') {
           console.log(
-            '⚠️ Release already exists (race condition detected), retrying to find and update existing release...',
+            '⚠️ Release 已存在（检测到竞争条件），正在重试查找并更新现有 Release...',
           );
-          // Don't throw - allow retry to find existing release
+          // 不抛出异常 - 允许重试并查找现有 Release
         } else {
-          console.log('Skip retry - validation failed');
+          console.log('跳过重试 — 验证失败');
           throw error;
         }
         break;
     }
 
-    console.log(`retrying... (${maxRetries - 1} retries remaining)`);
+    console.log(`正在重试...（剩余 ${maxRetries - 1} 次重试机会）`);
+    // 随机延迟 1~3 秒，错开矩阵 Job 的重试时间
+    await sleep(UPDATE_RACE_RETRY_DELAY_MS + randomInt(1000));
     return release(config, releaser, maxRetries - 1);
   }
 }

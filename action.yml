@@ -1,79 +1,79 @@
 # https://help.github.com/en/articles/metadata-syntax-for-github-actions
 name: "GH Release"
-description: "Github Action for creating Github Releases"
+description: "用于创建 GitHub Release 的 GitHub Action"
 author: "softprops"
 inputs:
   body:
-    description: "Note-worthy description of changes in release"
+    description: "Release 的变更说明"
     required: false
   body_path:
-    description: "Path to load note-worthy description of changes in release from"
+    description: "用于加载 Release 变更说明的文件路径"
     required: false
   name:
-    description: "Gives the release a custom name. Defaults to tag name"
+    description: "为 Release 设置自定义名称，默认为标签名"
     required: false
   tag_name:
-    description: "Gives a tag name. Defaults to github.ref_name. refs/tags/<name> values are normalized to <name>."
+    description: "指定标签名称，默认为 github.ref_name。refs/tags/<name> 值会被规范化为 <name>。"
     required: false
   draft:
-    description: "Keeps the release as a draft. Defaults to false. When reusing an existing draft release, set this to true to keep it draft; omit it to publish after upload. On immutable-release repositories, use this for prereleases that upload assets and publish the draft later."
+    description: "将 Release 保持为草稿状态，默认为 false。复用时如果已有草稿 Release，设置为 true 保持草稿；省略该选项则在上传后发布。对于不可变 Release 仓库，请使用此选项为预发布上传资产，稍后再发布草稿。"
     required: false
   prerelease:
-    description: "Identify the release as a prerelease. Defaults to false"
+    description: "将 Release 标记为预发布，默认为 false"
     required: false
   preserve_order:
-    description: "Upload artifacts sequentially in the provided order. This does not control the final display order GitHub uses for release assets."
+    description: "按提供的顺序依次上传资产文件。这不控制 GitHub 在 Release 页面上显示资产的最终顺序。"
     required: false
   files:
-    description: "Newline-delimited list of path globs for asset files to upload. Escape glob metacharacters when matching literal filenames that contain them. `~/...` expands to the runner home directory. On Windows, both \\ and / path separators are accepted. GitHub may normalize raw asset filenames that contain special characters; the action restores the asset label when possible, but the final download name remains GitHub-controlled."
+    description: "以换行符分隔的资产文件路径 glob 列表。匹配包含 glob 元字符的文字文件名时需转义。`~/...` 会展开为运行者的家目录。Windows 上同时支持 \\ 和 / 路径分隔符。GitHub 可能会规范化包含特殊字符的原始资产文件名；操作会尽可能恢复资产标签，但最终下载名称仍由 GitHub 控制。"
     required: false
   working_directory:
-    description: "Base directory to resolve 'files' globs against. Defaults to the workspace root used by the action step."
+    description: "解析 'files' glob 的基准目录，默认为 Action 步骤使用的工作区根目录"
     required: false
   overwrite_files:
-    description: "Overwrite existing files with the same name. Defaults to true"
+    description: "覆盖已存在的同名文件，默认为 true"
     required: false
     default: 'true'
   fail_on_unmatched_files:
-    description: "Fails if any of the `files` globs match nothing. Defaults to false"
+    description: "如果任何 `files` glob 没有匹配到文件则失败，默认为 false"
     required: false
   repository:
-    description: "Repository to make releases against, in <owner>/<repo> format"
+    description: "要创建 Release 的目标仓库，格式为 <owner>/<repo>"
     required: false
   token:
-    description: "Authorized GitHub token or PAT. Defaults to github.token when omitted. A non-empty explicit token overrides GITHUB_TOKEN. Passing an empty string treats the token as unset."
+    description: "授权的 GitHub Token 或 PAT。省略时默认为 github.token。非空显式 Token 会覆盖 GITHUB_TOKEN。传入空字符串视作未设置 Token。"
     required: false
     default: ${{ github.token }}
   target_commitish:
-    description: "Commitish value that determines where the Git tag is created from. Can be any branch or commit SHA. When creating a new tag for an older commit, `github.token` may not have permission to create the ref; use a PAT or another token with sufficient contents permissions if you hit 403 `Resource not accessible by integration`."
+    description: "决定 Git 标签创建来源的 Commitish 值，可以是任何分支或提交 SHA。为旧提交创建新标签时，`github.token` 可能没有创建引用的权限；如果遇到 403 \"Resource not accessible by integration\"，请使用 PAT 或其他具有足够内容权限的 Token。"
     required: false
   discussion_category_name:
-    description: "If specified, a discussion of the specified category is created and linked to the release. The value must be a category that already exists in the repository. If there is already a discussion linked to the release, this parameter is ignored."
+    description: "如果指定，则会创建指定分类的讨论并链接到该 Release。该值必须是仓库中已存在的分类。如果 Release 已链接到某个讨论，则此参数将被忽略。"
     required: false
   generate_release_notes:
-    description: "Whether to automatically generate the name and body for this release. If name is specified, the specified name will be used; otherwise, a name will be automatically generated. If body is specified, the body will be pre-pended to the automatically generated notes."
+    description: "是否自动生成 Release 的名称和正文。如果指定了 name，则使用指定的名称；否则自动生成。如果指定了 body，则正文将追加到自动生成的说明之前。"
     required: false
   previous_tag:
-    description: "Optional. When generate_release_notes is enabled, use this tag as GitHub's previous_tag_name comparison base. If omitted, GitHub chooses the comparison base automatically."
+    description: "可选。当启用 generate_release_notes 时，使用此标签作为 GitHub 的 previous_tag_name 比较基准。如果省略，GitHub 会自动选择比较基准。"
     required: false
     default: ""
   append_body:
-    description: "Append to existing body instead of overwriting it. Default is false."
+    description: "追加到现有正文而非覆盖，默认为 false"
     required: false
   make_latest:
-    description: "Specifies whether this release should be set as the latest release for the repository. Drafts and prereleases cannot be set as latest. Can be `true`, `false`, or `legacy`. Uses GitHub api default if not provided"
+    description: "指定此 Release 是否应设置为仓库的最新 Release。草稿和预发布不能设置为最新。可选值为 `true`、`false` 或 `legacy`。未提供时使用 GitHub API 默认值。"
     required: false
 env:
-  GITHUB_TOKEN: "As provided by Github Actions"
+  GITHUB_TOKEN: "由 GitHub Actions 提供"
 outputs:
   url:
-    description: "URL to the Release HTML Page"
+    description: "Release HTML 页面的 URL"
   id:
     description: "Release ID"
   upload_url:
-    description: "URL for uploading assets to the release"
+    description: "用于上传资产到 Release 的 URL"
   assets:
-    description: "JSON array containing information about each uploaded asset, in the format given [here](https://docs.github.com/en/rest/reference/repos#upload-a-release-asset--code-samples) (minus the `uploader` field)"
+    description: "JSON 数组，包含每个已上传资产的信息，格式参见[此处](https://docs.github.com/en/rest/reference/repos#upload-a-release-asset--code-samples)（不含 `uploader` 字段）"
 runs:
   using: "node24"
   main: "dist/index.js"
