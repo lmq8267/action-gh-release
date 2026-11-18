@@ -1,12 +1,64 @@
 import { GitHub } from '@actions/github/lib/utils';
 import { statSync } from 'fs';
-import { open } from 'fs/promises';
+import { open, type FileHandle } from 'fs/promises';
 import { lookup } from 'mime-types';
 import { basename } from 'path';
 import { randomInt } from 'crypto';
 import { alignAssetName, Config, isTag, normalizeTagName, releaseBody } from './util';
 
 type GitHub = InstanceType<typeof GitHub>;
+
+type UploadChunk = ArrayBuffer | Uint8Array<ArrayBufferLike>;
+type UploadBody = ReadableStream<Uint8Array<ArrayBufferLike>>;
+type UnknownRecord = Record<string, unknown>;
+
+const asRecord = (value: unknown): UnknownRecord | undefined =>
+  typeof value === 'object' && value !== null ? (value as UnknownRecord) : undefined;
+
+const getErrorStatus = (error: unknown): number | undefined => {
+  const errorRecord = asRecord(error);
+  if (typeof errorRecord?.status === 'number') {
+    return errorRecord.status;
+  }
+
+  const response = asRecord(errorRecord?.response);
+  return typeof response?.status === 'number' ? response.status : undefined;
+};
+
+const getResponseData = (error: unknown): UnknownRecord | undefined => {
+  const response = asRecord(asRecord(error)?.response);
+  return asRecord(response?.data);
+};
+
+const getErrorMessage = (error: unknown): string | undefined => {
+  const message = asRecord(error)?.message;
+  return typeof message === 'string' ? message : undefined;
+};
+
+const getRequestUrl = (error: unknown): string | undefined => {
+  const request = asRecord(asRecord(error)?.request);
+  return typeof request?.url === 'string' ? request.url : undefined;
+};
+
+const getValidationErrors = (error: unknown): unknown[] => {
+  const errors = getResponseData(error)?.errors;
+  return Array.isArray(errors) ? errors : [];
+};
+
+const hasValidationErrorCode = (error: unknown, code: string): boolean =>
+  asRecord(getValidationErrors(error)[0])?.code === code;
+
+// Node 24 的 readableWebStream 可能产出 ArrayBuffer，统一转成 Uint8Array 后再交给上传请求
+const fileUploadStream = (fileHandle: FileHandle): UploadBody => {
+  const source = fileHandle.readableWebStream() as ReadableStream<UploadChunk>;
+  return source.pipeThrough(
+    new TransformStream<UploadChunk, Uint8Array<ArrayBufferLike>>({
+      transform(chunk, controller) {
+        controller.enqueue(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
+      },
+    }),
+  );
+};
 
 export interface ReleaseAsset {
   name: string;
@@ -100,7 +152,7 @@ export interface Releaser {
     size: number;
     mime: string;
     token: string;
-    data: any;
+    data: UploadBody;
   }): Promise<{ status: number; data: any }>;
 }
 
@@ -240,7 +292,7 @@ export class GitHubReleaser implements Releaser {
     size: number;
     mime: string;
     token: string;
-    data: any;
+    data: UploadBody;
   }): Promise<{ status: number; data: any }> {
     return this.github.request({
       method: 'POST',
@@ -272,10 +324,10 @@ const releaseAssetMatchesName = (
   asset: { name: string; label?: string | null },
 ): boolean => asset.name === name || asset.name === alignAssetName(name) || asset.label === name;
 
-const isReleaseAssetUpdateNotFound = (error: any): boolean => {
-  const errorStatus = error?.status ?? error?.response?.status;
-  const requestUrl = error?.request?.url;
-  const errorMessage = error?.message;
+const isReleaseAssetUpdateNotFound = (error: unknown): boolean => {
+  const errorStatus = getErrorStatus(error);
+  const requestUrl = getRequestUrl(error);
+  const errorMessage = getErrorMessage(error);
   const isReleaseAssetRequest =
     typeof requestUrl === 'string' &&
     (/\/releases\/assets\//.test(requestUrl) || /\/releases\/\d+\/assets(?:\?|$)/.test(requestUrl));
@@ -287,9 +339,9 @@ const isReleaseAssetUpdateNotFound = (error: any): boolean => {
   );
 };
 
-const isImmutableReleaseAssetUploadFailure = (error: any): boolean => {
-  const errorStatus = error?.status ?? error?.response?.status;
-  const errorMessage = error?.response?.data?.message ?? error?.message;
+const isImmutableReleaseAssetUploadFailure = (error: unknown): boolean => {
+  const errorStatus = getErrorStatus(error);
+  const errorMessage = getResponseData(error)?.message ?? getErrorMessage(error);
 
   return errorStatus === 422 && /immutable release/i.test(String(errorMessage));
 };
@@ -368,7 +420,7 @@ export const upload = async (
         size,
         mime,
         token: config.github_token,
-        data: fh.readableWebStream(),
+        data: fileUploadStream(fh),
       });
     } finally {
       await fh.close();
@@ -400,8 +452,8 @@ export const upload = async (
 
     try {
       return await updateAssetLabel(uploadedAsset.id);
-    } catch (error: any) {
-      const errorStatus = error?.status ?? error?.response?.status;
+    } catch (error) {
+      const errorStatus = getErrorStatus(error);
 
       if (errorStatus === 404 && releaseId !== undefined) {
         try {
@@ -438,9 +490,8 @@ export const upload = async (
 
   try {
     return await handleUploadedAsset(await uploadAsset());
-  } catch (error: any) {
-    const errorStatus = error?.status ?? error?.response?.status;
-    const errorData = error?.response?.data;
+  } catch (error) {
+    const errorStatus = getErrorStatus(error);
 
     if (isImmutableReleaseAssetUploadFailure(error)) {
       throw new Error(immutableReleaseAssetUploadMessage(name, config.input_prerelease));
@@ -458,9 +509,7 @@ export const upload = async (
           return latestAsset;
         }
       } catch (refreshError) {
-        console.warn(
-          `元数据更新失败后刷新 Release 资产时出错：${refreshError}`,
-        );
+        console.warn(`元数据更新失败后刷新 Release 资产时出错：${refreshError}`);
       }
     }
 
@@ -468,12 +517,10 @@ export const upload = async (
     if (
       config.input_overwrite_files !== false &&
       errorStatus === 422 &&
-      errorData?.errors?.[0]?.code === 'already_exists' &&
+      hasValidationErrorCode(error, 'already_exists') &&
       releaseId !== undefined
     ) {
-      console.log(
-        `⚠️ 资产 ${name} 已存在（竞态条件），正在刷新资产列表并重试一次...`,
-      );
+      console.log(`⚠️ 资产 ${name} 已存在（竞态条件），正在刷新资产列表并重试一次...`);
       const latestAssets = await releaser.listReleaseAssets({
         owner,
         repo,
@@ -519,7 +566,13 @@ export const release = async (
     console.log(`📝 使用上一个标签 ${previous_tag_name} 生成 Release 说明`);
   }
   try {
-    const _release: Release | undefined = await findTagFromReleases(releaser, owner, repo, tag);
+    const _release: Release | undefined = await findTagFromReleases(
+      releaser,
+      owner,
+      repo,
+      tag,
+      maxRetries,
+    );
 
     if (_release === undefined) {
       return await createRelease(
@@ -587,6 +640,7 @@ export const release = async (
       discussion_category_name,
       generate_release_notes,
       make_latest,
+      previous_tag_name,
     } as ReleaseMutationParams & {
       release_id: number;
       target_commitish: string;
@@ -596,9 +650,9 @@ export const release = async (
       created: false,
     };
   } catch (error) {
-    if (error.status !== 404) {
+    if (getErrorStatus(error) !== 404) {
       // 处理矩阵构建中的竞态条件：两个 Job 同时更新同一个 Release
-      if (error.status === 422 && error.response?.data?.errors?.[0]?.code === 'already_exists') {
+      if (getErrorStatus(error) === 422 && hasValidationErrorCode(error, 'already_exists')) {
         console.log(
           `⚠️ Release 更新时检测到竞态条件（already_exists），正在重试...（剩余 ${maxRetries - 1} 次重试机会）`,
         );
@@ -607,9 +661,7 @@ export const release = async (
         return release(config, releaser, maxRetries - 1);
       }
 
-      console.log(
-        `⚠️ 获取标签 ${config.github_ref} 的 GitHub Release 时出现意外错误：${error}`,
-      );
+      console.log(`⚠️ 获取标签 ${config.github_ref} 的 GitHub Release 时出现意外错误：${error}`);
       throw error;
     }
 
@@ -686,9 +738,7 @@ export const finalizeRelease = async (
       const cleanupResult = deleted
         ? `已删除草稿 Release ${release.id} 以避免留下孤立的草稿 Release。`
         : `无法删除草稿 Release ${release.id}；可能需要手动清理。`;
-      throw new Error(
-        `标签 ${release.tag_name} 的创建被仓库规则阻止。${cleanupResult}`,
-      );
+      throw new Error(`标签 ${release.tag_name} 的创建被仓库规则阻止。${cleanupResult}`);
     }
 
     console.log(`正在重试...（剩余 ${maxRetries - 1} 次重试机会）`);
@@ -734,14 +784,16 @@ export const listReleaseAssets = async (
 /**
  * Finds a release by tag name.
  *
- * Uses the direct getReleaseByTag API for O(1) lookup instead of iterating
- * through all releases. This also avoids GitHub's API pagination limit of
- * 10000 results which would cause failures for repositories with many releases.
+ * Uses the direct getReleaseByTag API for O(1) lookup. Because GitHub does not
+ * expose draft releases through that endpoint, a 404 falls back to a bounded
+ * scan of recent releases and briefly retries in case the listing is not yet
+ * consistent.
  *
  * @param releaser - The GitHub API wrapper for release operations
  * @param owner - The owner of the repository
  * @param repo - The name of the repository
  * @param tag - The tag name to search for
+ * @param listingAttempts - 直接查询 404 后，扫描最近 Release 列表的最大尝试次数
  * @returns The release with the given tag name, or undefined if no release with that tag name is found
  */
 export async function findTagFromReleases(
@@ -749,18 +801,36 @@ export async function findTagFromReleases(
   owner: string,
   repo: string,
   tag: string,
+  listingAttempts: number = 1,
 ): Promise<Release | undefined> {
   try {
     const { data: release } = await releaser.getReleaseByTag({ owner, repo, tag });
     return release;
   } catch (error) {
-    // Release not found (404) or other error - return undefined to allow creation
-    if (error.status === 404) {
-      return undefined;
+    // 只有 404 才继续尝试列表扫描；其余错误直接抛出
+    if (getErrorStatus(error) !== 404) {
+      throw error;
     }
-    // Re-throw unexpected errors
-    throw error;
   }
+
+  if (listingAttempts <= 0) {
+    return undefined;
+  }
+
+  const attempts = Math.max(1, listingAttempts);
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const recentReleases = await recentReleasesByTag(releaser, owner, repo, tag);
+    const canonicalRelease = pickCanonicalRelease(recentReleases, undefined);
+    if (canonicalRelease) {
+      return canonicalRelease;
+    }
+
+    if (attempt < attempts - 1) {
+      await sleep(CREATED_RELEASE_DISCOVERY_RETRY_DELAY_MS);
+    }
+  }
+
+  return undefined;
 }
 
 const CREATED_RELEASE_DISCOVERY_RETRY_DELAY_MS = 1000;
@@ -813,33 +883,32 @@ function pickCanonicalRelease(
   })[0];
 }
 
-async function cleanupDuplicateDraftReleases(
+async function cleanupCreatedDuplicateDraftRelease(
   releaser: Releaser,
   owner: string,
   repo: string,
   tag: string,
   canonicalReleaseId: number,
-  releases: Release[],
+  createdRelease: Release,
 ): Promise<void> {
-  const uniqueReleases = Array.from(
-    new Map(releases.map((release) => [release.id, release])).values(),
-  );
+  // 只清理本次刚创建的那个草稿，避免误删其它矩阵 Job 正在使用、尚未上传资产的草稿
+  if (
+    createdRelease.id === canonicalReleaseId ||
+    !createdRelease.draft ||
+    createdRelease.assets.length > 0
+  ) {
+    return;
+  }
 
-  for (const duplicate of uniqueReleases) {
-    if (duplicate.id === canonicalReleaseId || !duplicate.draft || duplicate.assets.length > 0) {
-      continue;
-    }
-
-    try {
-      console.log(`🧹 正在删除标签 ${tag} 的重复草稿 Release ${duplicate.id}...`);
-      await releaser.deleteRelease({
-        owner,
-        repo,
-        release_id: duplicate.id,
-      });
-    } catch (error) {
-      console.warn(`删除重复 Release ${duplicate.id} 时出错：${error}`);
-    }
+  try {
+    console.log(`🧹 正在删除标签 ${tag} 的重复草稿 Release ${createdRelease.id}...`);
+    await releaser.deleteRelease({
+      owner,
+      repo,
+      release_id: createdRelease.id,
+    });
+  } catch (error) {
+    console.warn(`删除重复 Release ${createdRelease.id} 时出错：${error}`);
   }
 }
 
@@ -856,7 +925,7 @@ async function canonicalizeCreatedRelease(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let releaseByTag: Release | undefined;
     try {
-      releaseByTag = await findTagFromReleases(releaser, owner, repo, tag);
+      releaseByTag = await findTagFromReleases(releaser, owner, repo, tag, 0);
     } catch (error) {
       console.warn(`重新加载标签 ${tag} 的 Release 时出错：${error}`);
     }
@@ -876,10 +945,19 @@ async function canonicalizeCreatedRelease(
         );
       }
 
-      await cleanupDuplicateDraftReleases(releaser, owner, repo, tag, canonicalRelease.id, [
-        createdRelease,
-        ...recentReleases,
-      ]);
+      const refreshedCreatedRelease = recentReleases.find(
+        (release) => release.id === createdRelease.id,
+      );
+      if (refreshedCreatedRelease) {
+        await cleanupCreatedDuplicateDraftRelease(
+          releaser,
+          owner,
+          repo,
+          tag,
+          canonicalRelease.id,
+          refreshedCreatedRelease,
+        );
+      }
       return canonicalRelease;
     }
 
@@ -893,9 +971,7 @@ async function canonicalizeCreatedRelease(
     }
   }
 
-  console.log(
-    `⚠️ 继续使用新创建的 Release ${createdRelease.id}，因为标签 ${tag} 仍然无法查找到`,
-  );
+  console.log(`⚠️ 继续使用新创建的 Release ${createdRelease.id}，因为标签 ${tag} 仍然无法查找到`);
   return createdRelease;
 }
 
@@ -950,15 +1026,14 @@ async function createRelease(
       created: canonicalRelease.id === createdRelease.data.id,
     };
   } catch (error) {
+    const errorStatus = getErrorStatus(error);
     // 推测是与并行运行的竞争条件
-    console.log(`⚠️ GitHub Release 创建失败，状态码：${error.status}`);
-    console.log(`${JSON.stringify(error.response.data)}`);
+    console.log(`⚠️ GitHub Release 创建失败，状态码：${errorStatus}`);
+    console.log(`${JSON.stringify(getResponseData(error))}`);
 
-    switch (error.status) {
+    switch (errorStatus) {
       case 403:
-        console.log(
-          '跳过重试 — 您的 GitHub Token/PAT 没有创建 Release 所需的权限',
-        );
+        console.log('跳过重试 — 您的 GitHub Token/PAT 没有创建 Release 所需的权限');
         throw error;
 
       case 404:
@@ -967,11 +1042,8 @@ async function createRelease(
 
       case 422:
         // 检查是否为 "already_exists" 错误（竞争条件）
-        const errorData = error.response?.data;
-        if (errorData?.errors?.[0]?.code === 'already_exists') {
-          console.log(
-            '⚠️ Release 已存在（检测到竞争条件），正在重试查找并更新现有 Release...',
-          );
+        if (hasValidationErrorCode(error, 'already_exists')) {
+          console.log('⚠️ Release 已存在（检测到竞争条件），正在重试查找并更新现有 Release...');
           // 不抛出异常 - 允许重试并查找现有 Release
         } else {
           console.log('跳过重试 — 验证失败');
@@ -987,16 +1059,18 @@ async function createRelease(
   }
 }
 
-function isTagCreationBlockedError(error: any): boolean {
-  const errors = error?.response?.data?.errors;
-  if (!Array.isArray(errors) || error?.status !== 422) {
+function isTagCreationBlockedError(error: unknown): boolean {
+  const errors = getValidationErrors(error);
+  if (errors.length === 0 || getErrorStatus(error) !== 422) {
     return false;
   }
 
-  return errors.some(
-    ({ field, message }: { field?: string; message?: string }) =>
+  return errors.some((entry) => {
+    const { field, message } = asRecord(entry) ?? {};
+    return (
       field === 'pre_receive' &&
       typeof message === 'string' &&
-      message.includes('creations being restricted'),
-  );
+      message.includes('creations being restricted')
+    );
+  });
 }

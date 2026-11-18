@@ -146,6 +146,51 @@ describe('github', () => {
 
       assert.deepStrictEqual(result, targetRelease);
     });
+
+    it('falls back to listing recent releases when a draft is hidden from tag lookup', async () => {
+      const draftRelease = {
+        ...mockRelease,
+        id: 42,
+        tag_name: 'v2.0.12',
+        draft: true,
+      };
+
+      const releaser = {
+        ...mockReleaser,
+        getReleaseByTag: () => Promise.reject({ status: 404 }),
+        allReleases: async function* () {
+          yield { data: [draftRelease] };
+        },
+      };
+
+      const result = await findTagFromReleases(releaser, owner, repo, 'v2.0.12');
+
+      assert.deepStrictEqual(result, draftRelease);
+    });
+
+    it('retries the listing while a newly created draft is not visible yet', async () => {
+      const draftRelease = {
+        ...mockRelease,
+        id: 43,
+        tag_name: 'v2.0.13',
+        draft: true,
+      };
+      let listings = 0;
+
+      const releaser = {
+        ...mockReleaser,
+        getReleaseByTag: () => Promise.reject({ status: 404 }),
+        allReleases: async function* () {
+          listings += 1;
+          yield { data: listings > 1 ? [draftRelease] : [] };
+        },
+      };
+
+      const result = await findTagFromReleases(releaser, owner, repo, 'v2.0.13', 2);
+
+      assert.deepStrictEqual(result, draftRelease);
+      assert.strictEqual(listings, 2);
+    });
   });
 
   describe('GitHubReleaser', () => {
@@ -455,7 +500,7 @@ describe('github', () => {
           true,
         ),
       ).rejects.toThrow(
-        'Tag creation for v1.0.0 is blocked by repository rules. Deleted draft release 1 to avoid leaving an orphaned draft release.',
+        '标签 v1.0.0 的创建被仓库规则阻止。已删除草稿 Release 1 以避免留下孤立的草稿 Release。',
       );
 
       expect(finalizeReleaseSpy).toHaveBeenCalledTimes(1);
@@ -511,7 +556,7 @@ describe('github', () => {
           false,
           1,
         ),
-      ).rejects.toThrow('Too many retries.');
+      ).rejects.toThrow('重试次数过多。');
 
       expect(finalizeReleaseSpy).toHaveBeenCalledTimes(1);
       expect(deleteReleaseSpy).not.toHaveBeenCalled();
@@ -633,14 +678,18 @@ describe('github', () => {
         assets: [],
       };
 
-      const createReleaseSpy = vi.fn(async () => ({ data: createdRelease }));
+      let created = false;
+      const createReleaseSpy = vi.fn(async () => {
+        created = true;
+        return { data: createdRelease };
+      });
       const mockReleaser: Releaser = {
         getReleaseByTag: () => Promise.reject({ status: 404 }),
         createRelease: createReleaseSpy,
         updateRelease: () => Promise.reject('Not implemented'),
         finalizeRelease: () => Promise.reject('Not implemented'),
         allReleases: async function* () {
-          yield { data: [createdRelease] };
+          yield { data: created ? [createdRelease] : [] };
         },
         listReleaseAssets: () => Promise.reject('Not implemented'),
         deleteReleaseAsset: () => Promise.reject('Not implemented'),
@@ -752,7 +801,7 @@ describe('github', () => {
           [],
         ),
       ).rejects.toThrow(
-        'Cannot upload asset draft-false.txt to an immutable release. GitHub only allows asset uploads before a release is published, but draft prereleases publish with the release.published event instead of release.prereleased.',
+        '无法将资产 draft-false.txt 上传到不可变的 Release。GitHub 只允许在 Release 发布之前上传资产，但草稿预发布使用 release.published 事件而非 release.prereleased 事件触发。如果需要在不可变 Release 仓库中为预发布上传资产，请使用 draft: true 保持草稿状态，然后稍后从该草稿发布并让下游工作流订阅 release.published。',
       );
 
       rmSync(tempDir, { recursive: true, force: true });
@@ -934,9 +983,10 @@ describe('github', () => {
         repo: 'repo',
         tag: 'v1.0.0',
       });
+      // 标签未变化时 Action 不传 tag_name，避免触发 GitHub 的 422 already_exists 唯一性校验
       expect(updateReleaseSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          tag_name: 'v1.0.0',
+          release_id: existingRelease.id,
         }),
       );
       assert.equal(result.release.id, existingRelease.id);
@@ -979,11 +1029,14 @@ describe('github', () => {
           }
           return Promise.resolve({ data: canonicalRelease });
         },
-        createRelease: () => Promise.resolve({ data: duplicateRelease }),
+        createRelease: () => {
+          lookupCount += 1;
+          return Promise.resolve({ data: duplicateRelease });
+        },
         updateRelease: () => Promise.reject('Not implemented'),
         finalizeRelease: () => Promise.reject('Not implemented'),
         allReleases: async function* () {
-          yield { data: [duplicateRelease, canonicalRelease] };
+          yield { data: lookupCount > 1 ? [duplicateRelease, canonicalRelease] : [] };
         },
         listReleaseAssets: () => Promise.reject('Not implemented'),
         deleteReleaseAsset: () => Promise.reject('Not implemented'),
@@ -992,7 +1045,7 @@ describe('github', () => {
         uploadReleaseAsset: () => Promise.reject('Not implemented'),
       };
 
-      const result = await release(config, mockReleaser, 2);
+      const result = await release(config, mockReleaser, 1);
 
       assert.equal(result.release.id, canonicalRelease.id);
       assert.equal(result.created, false);
@@ -1029,14 +1082,18 @@ describe('github', () => {
         assets: [],
       };
 
+      let created = false;
       const deleteReleaseSpy = vi.fn(async () => undefined);
       const mockReleaser: Releaser = {
         getReleaseByTag: () => Promise.reject({ status: 404 }),
-        createRelease: () => Promise.resolve({ data: duplicateRelease }),
+        createRelease: () => {
+          created = true;
+          return Promise.resolve({ data: duplicateRelease });
+        },
         updateRelease: () => Promise.reject('Not implemented'),
         finalizeRelease: () => Promise.reject('Not implemented'),
         allReleases: async function* () {
-          yield { data: [duplicateRelease, canonicalRelease] };
+          yield { data: created ? [duplicateRelease, canonicalRelease] : [] };
         },
         listReleaseAssets: () => Promise.reject('Not implemented'),
         deleteReleaseAsset: () => Promise.reject('Not implemented'),
@@ -1056,7 +1113,7 @@ describe('github', () => {
       });
     });
 
-    it('deletes the just-created duplicate draft even if recent release listing misses it', async () => {
+    it('does not delete the just-created duplicate when refreshed state is unavailable', async () => {
       const canonicalRelease: Release = {
         id: 1,
         upload_url: 'canonical-upload',
@@ -1092,11 +1149,14 @@ describe('github', () => {
           }
           return Promise.resolve({ data: canonicalRelease });
         },
-        createRelease: () => Promise.resolve({ data: duplicateRelease }),
+        createRelease: () => {
+          lookupCount += 1;
+          return Promise.resolve({ data: duplicateRelease });
+        },
         updateRelease: () => Promise.reject('Not implemented'),
         finalizeRelease: () => Promise.reject('Not implemented'),
         allReleases: async function* () {
-          yield { data: [canonicalRelease] };
+          yield { data: lookupCount > 1 ? [canonicalRelease] : [] };
         },
         listReleaseAssets: () => Promise.reject('Not implemented'),
         deleteReleaseAsset: () => Promise.reject('Not implemented'),
@@ -1105,15 +1165,11 @@ describe('github', () => {
         uploadReleaseAsset: () => Promise.reject('Not implemented'),
       };
 
-      const result = await release(config, mockReleaser, 2);
+      const result = await release(config, mockReleaser, 1);
 
       assert.equal(result.release.id, canonicalRelease.id);
       assert.equal(result.created, false);
-      expect(deleteReleaseSpy).toHaveBeenCalledWith({
-        owner: 'owner',
-        repo: 'repo',
-        release_id: duplicateRelease.id,
-      });
+      expect(deleteReleaseSpy).not.toHaveBeenCalled();
     });
   });
 
