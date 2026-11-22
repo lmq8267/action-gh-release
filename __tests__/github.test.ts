@@ -316,6 +316,7 @@ describe('github', () => {
         owner: 'owner',
         repo: 'repo',
         release_id: 1,
+        tag_name: 'v1.0.0',
         make_latest: 'legacy',
         discussion_category_name: 'Announcements',
       });
@@ -324,6 +325,7 @@ describe('github', () => {
         owner: 'owner',
         repo: 'repo',
         release_id: 1,
+        tag_name: 'v1.0.0',
         draft: false,
         make_latest: 'legacy',
         discussion_category_name: 'Announcements',
@@ -412,6 +414,7 @@ describe('github', () => {
           owner: 'owner',
           repo: 'repo',
           release_id: release.id,
+          tag_name: release.tag_name,
           make_latest: undefined,
           discussion_category_name: undefined,
         });
@@ -450,6 +453,7 @@ describe('github', () => {
         owner: 'owner',
         repo: 'repo',
         release_id: draftRelease.id,
+        tag_name: draftRelease.tag_name,
         make_latest: undefined,
         discussion_category_name: 'Announcements',
       });
@@ -983,13 +987,59 @@ describe('github', () => {
         repo: 'repo',
         tag: 'v1.0.0',
       });
-      // 标签未变化时 Action 不传 tag_name，避免触发 GitHub 的 422 already_exists 唯一性校验
+      // 已发布 Release 的标签已固定，标签未变化时不传 tag_name，避免触发 422 already_exists 唯一性校验
       expect(updateReleaseSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           release_id: existingRelease.id,
         }),
       );
       assert.equal(result.release.id, existingRelease.id);
+      assert.equal(result.created, false);
+    });
+
+    it('sends tag_name when updating a draft release so GitHub does not reset it to untagged', async () => {
+      const draftRelease: Release = {
+        id: 1,
+        upload_url: 'test',
+        html_url: 'test',
+        tag_name: 'v1.0.0',
+        name: 'test',
+        body: 'test',
+        target_commitish: 'main',
+        draft: true,
+        prerelease: false,
+        assets: [],
+      };
+      const updateReleaseSpy = vi.fn(async () => ({ data: draftRelease }));
+
+      const result = await release(
+        config,
+        {
+          getReleaseByTag: () => Promise.resolve({ data: draftRelease }),
+          createRelease: () => Promise.reject('Not implemented'),
+          updateRelease: updateReleaseSpy,
+          finalizeRelease: () => Promise.reject('Not implemented'),
+          allReleases: async function* () {
+            yield { data: [draftRelease] };
+          },
+          listReleaseAssets: () => Promise.reject('Not implemented'),
+          deleteReleaseAsset: () => Promise.reject('Not implemented'),
+          deleteRelease: () => Promise.reject('Not implemented'),
+          updateReleaseAsset: () => Promise.reject('Not implemented'),
+          uploadReleaseAsset: () => Promise.reject('Not implemented'),
+        },
+        1,
+      );
+
+      expect(updateReleaseSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          release_id: draftRelease.id,
+          tag_name: 'v1.0.0',
+        }),
+      );
+      // 不显式传 draft，避免并发 Job 把已发布的 Release 改回草稿
+      expect(updateReleaseSpy.mock.calls[0][0]).not.toHaveProperty('draft');
+      assert.equal(result.release.id, draftRelease.id);
       assert.equal(result.created, false);
     });
 

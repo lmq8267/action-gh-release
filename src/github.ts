@@ -98,7 +98,7 @@ type ReleaseMutationParams = {
   tag_name: string;
   name: string;
   body: string | undefined;
-  draft: boolean | undefined;
+  draft?: boolean;
   prerelease: boolean | undefined;
   target_commitish: string | undefined;
   discussion_category_name: string | undefined;
@@ -123,6 +123,7 @@ export interface Releaser {
     owner: string;
     repo: string;
     release_id: number;
+    tag_name: string;
     make_latest: 'true' | 'false' | 'legacy' | undefined;
     discussion_category_name: string | undefined;
   }): Promise<{ data: Release }>;
@@ -234,6 +235,7 @@ export class GitHubReleaser implements Releaser {
     owner: string;
     repo: string;
     release_id: number;
+    tag_name: string;
     make_latest: 'true' | 'false' | 'legacy' | undefined;
     discussion_category_name: string | undefined;
   }) {
@@ -241,6 +243,9 @@ export class GitHubReleaser implements Releaser {
       owner: params.owner,
       repo: params.repo,
       release_id: params.release_id,
+      // 发布草稿时必须带上 tag_name：GitHub 对未带 tag_name 的草稿 PATCH
+      // 会把标签关联重置为 untagged-*，发布后就留下错误的标签。
+      tag_name: params.tag_name,
       draft: false,
       make_latest: params.make_latest,
       discussion_category_name: params.discussion_category_name,
@@ -478,9 +483,9 @@ export const upload = async (
     const json = resp.data;
     if (resp.status !== 201) {
       throw new Error(
-        `上传 Release 资产 ${name} 失败。收到状态码 ${
-          resp.status
-        }\n${json.message}\n${JSON.stringify(json.errors)}`,
+        `上传 Release 资产 ${name} 失败。收到状态码 ${resp.status}\n${
+          json.message
+        }\n${JSON.stringify(json.errors)}`,
       );
     }
     const assetWithLabel = await maybeRestoreAssetLabel(json);
@@ -625,17 +630,23 @@ export const release = async (
 
     const make_latest = config.input_make_latest;
 
-    // 更新 Release 时，如果标签没变就不传 tag_name，避免触发 GitHub API
-    // 的唯一性校验（422 already_exists），详见 https://docs.github.com/rest/releases/releases#update-a-release
+    // 草稿 Release 的 PATCH 必须带上 tag_name：GitHub 对未带 tag_name 的草稿更新
+    // 会把标签关联重置为 untagged-*，发布后就会生成错误的标签（实测于 2026-11-22
+    // 矩阵并行发布场景）。已发布的 Release 标签已固定，仍沿用“标签没变就不传”的
+    // 策略，避免触发 GitHub API 的唯一性校验（422 already_exists），
+    // 详见 https://docs.github.com/rest/releases/releases#update-a-release
+    const shouldSendTagName = existingRelease.draft || tag_name !== existingRelease.tag_name;
     const release = await releaser.updateRelease({
       owner,
       repo,
       release_id,
-      ...(tag_name !== existingRelease.tag_name ? { tag_name } : {}),
+      ...(shouldSendTagName ? { tag_name } : {}),
       target_commitish,
       name,
       body,
-      draft: existingRelease.draft,
+      // 不传 draft：矩阵中另一个 Job 可能已经完成发布，这里若用读取时的
+      // 旧值 draft=true 覆盖，会把已发布的 Release 改回草稿。省略后
+      // GitHub 保持 Release 当前状态，最终发布仍由 finalizeRelease 负责。
       prerelease,
       discussion_category_name,
       generate_release_notes,
@@ -654,7 +665,9 @@ export const release = async (
       // 处理矩阵构建中的竞态条件：两个 Job 同时更新同一个 Release
       if (getErrorStatus(error) === 422 && hasValidationErrorCode(error, 'already_exists')) {
         console.log(
-          `⚠️ Release 更新时检测到竞态条件（already_exists），正在重试...（剩余 ${maxRetries - 1} 次重试机会）`,
+          `⚠️ Release 更新时检测到竞态条件（already_exists），正在重试...（剩余 ${
+            maxRetries - 1
+          } 次重试机会）`,
         );
         // 随机延迟 1~3 秒，错开多个矩阵 Job 的重试时间，避免持续冲突
         await sleep(UPDATE_RACE_RETRY_DELAY_MS + randomInt(1000));
@@ -710,6 +723,8 @@ export const finalizeRelease = async (
       owner,
       repo,
       release_id: release.id,
+      // 发布草稿时显式带上期望的标签，避免 GitHub 把草稿发布成 untagged-*
+      tag_name: release.tag_name,
       make_latest: config.input_make_latest,
       discussion_category_name: config.input_discussion_category_name,
     });
